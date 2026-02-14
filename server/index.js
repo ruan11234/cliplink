@@ -4,6 +4,10 @@ const path = require('path');
 const config = require('./config');
 const { initDb, getPool } = require('./db/init');
 
+console.log('ClipLink starting...');
+console.log('PORT:', config.port);
+console.log('DATABASE_URL set:', !!config.databaseUrl);
+
 const app = express();
 
 // Middleware
@@ -66,12 +70,22 @@ app.get('*', (req, res) => {
   }
 });
 
-// Initialize DB and start server
+// Start server first, then initialize DB
 async function start() {
-  await initDb();
-  app.listen(config.port, () => {
-    console.log(`ClipLink server running at ${config.baseUrl}`);
+  const server = app.listen(config.port, () => {
+    console.log(`ClipLink server listening on port ${config.port}`);
   });
+
+  try {
+    await initDb();
+    console.log('Database initialized successfully');
+  } catch (err) {
+    console.error('Database initialization failed:', err.message);
+    console.error('Full error:', err);
+  }
 }
 
-start().catch(console.error);
+start().catch((err) => {
+  console.error('Fatal startup error:', err);
+  process.exit(1);
+});
