@@ -14,15 +14,20 @@ router.get('/:id', async (req, res) => {
     }
 
     const video = rows[0];
+    const isEmbed = video.source_type === 'embed' && video.embed_url;
 
     let videoSrc;
-    if (video.source_type === 'embed' && video.embed_url) {
+    if (isEmbed) {
       videoSrc = video.embed_url;
     } else {
       videoSrc = `${config.baseUrl}/api/videos/${video.id}/file`;
     }
 
-    res.render('embed', { video, videoSrc, baseUrl: config.baseUrl });
+    // Allow embedding from any origin (for Reddit, Embedly, etc.)
+    res.setHeader('X-Frame-Options', 'ALLOWALL');
+    res.setHeader('Content-Security-Policy', "frame-ancestors *");
+
+    res.render('embed', { video, videoSrc, isEmbed, baseUrl: config.baseUrl });
   } catch (err) {
     console.error('Embed error:', err);
     res.status(500).send('Error loading embed');
