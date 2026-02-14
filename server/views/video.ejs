@@ -18,9 +18,13 @@
   <meta property="og:video" content="<%= baseUrl %>/api/videos/<%= video.id %>/file" />
   <meta property="og:video:secure_url" content="<%= baseUrl %>/api/videos/<%= video.id %>/file" />
   <meta property="og:video:type" content="video/mp4" />
+  <% } else { %>
+  <meta property="og:video" content="<%= baseUrl %>/embed/<%= video.id %>" />
+  <meta property="og:video:secure_url" content="<%= baseUrl %>/embed/<%= video.id %>" />
+  <meta property="og:video:type" content="text/html" />
+  <% } %>
   <meta property="og:video:width" content="<%= video.width %>" />
   <meta property="og:video:height" content="<%= video.height %>" />
-  <% } %>
 
   <% if (video.thumbnail_path) { %>
   <meta property="og:image" content="<%= baseUrl %>/api/videos/<%= video.id %>/thumbnail" />
