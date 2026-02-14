@@ -6,6 +6,8 @@ const { nanoid } = require('nanoid');
 const config = require('../config');
 const { getPool } = require('../db/init');
 const { transcodeVideo, generateThumbnail, getVideoMetadata } = require('../services/videoProcessor');
+const { createClip } = require('../services/clipCreator');
+const { requireAuth, requireApproved } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -34,6 +36,18 @@ function slugify(text) {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 
+async function insertTags(pool, videoId, tags) {
+  const tagList = typeof tags === 'string' ? tags.split(',').map((t) => t.trim()).filter(Boolean) : tags;
+  for (const tagName of tagList) {
+    const tagSlug = slugify(tagName);
+    await pool.query('INSERT INTO tags (name, slug) VALUES ($1, $2) ON CONFLICT DO NOTHING', [tagName, tagSlug]);
+    const { rows: tagRows } = await pool.query('SELECT id FROM tags WHERE slug = $1', [tagSlug]);
+    if (tagRows.length > 0) {
+      await pool.query('INSERT INTO video_tags (video_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [videoId, tagRows[0].id]);
+    }
+  }
+}
+
 // List videos (with optional category/tag filters)
 router.get('/', async (req, res) => {
   try {
@@ -41,9 +55,10 @@ router.get('/', async (req, res) => {
     const { category, tag, search, limit = 50, offset = 0 } = req.query;
 
     let query = `
-      SELECT v.*, c.name as category_name, c.slug as category_slug
+      SELECT v.*, c.name as category_name, c.slug as category_slug, u.username as posted_by
       FROM videos v
       LEFT JOIN categories c ON v.category_id = c.id
+      LEFT JOIN users u ON v.user_id = u.id
     `;
     const params = [];
     const conditions = [];
@@ -51,9 +66,10 @@ router.get('/', async (req, res) => {
 
     if (tag) {
       query = `
-        SELECT v.*, c.name as category_name, c.slug as category_slug
+        SELECT v.*, c.name as category_name, c.slug as category_slug, u.username as posted_by
         FROM videos v
         LEFT JOIN categories c ON v.category_id = c.id
+        LEFT JOIN users u ON v.user_id = u.id
         INNER JOIN video_tags vt ON v.id = vt.video_id
         INNER JOIN tags t ON vt.tag_id = t.id
       `;
@@ -107,9 +123,10 @@ router.get('/:id', async (req, res) => {
   try {
     const pool = getPool();
     const { rows } = await pool.query(
-      `SELECT v.*, c.name as category_name, c.slug as category_slug
+      `SELECT v.*, c.name as category_name, c.slug as category_slug, u.username as posted_by
        FROM videos v
        LEFT JOIN categories c ON v.category_id = c.id
+       LEFT JOIN users u ON v.user_id = u.id
        WHERE v.id = $1`,
       [req.params.id]
     );
@@ -214,8 +231,48 @@ router.post('/:id/view', async (req, res) => {
   }
 });
 
+// Create clip from URL
+router.post('/clip', requireAuth, requireApproved, async (req, res) => {
+  try {
+    const pool = getPool();
+    const id = nanoid(10);
+    const { url, start_time, duration, title, description, category_id, tags } = req.body;
+
+    if (!url || !title) {
+      return res.status(400).json({ error: 'URL and title are required' });
+    }
+
+    const clipDuration = Math.min(parseInt(duration) || 59, config.maxClipDuration);
+
+    const result = await createClip({
+      url,
+      startTime: start_time || '0',
+      duration: clipDuration,
+      clipId: id,
+    });
+
+    await pool.query(
+      `INSERT INTO videos (id, title, description, category_id, source_type, file_path, thumbnail_path, width, height, duration, user_id, source_url)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+      [id, title, description || null, category_id ? parseInt(category_id) : null,
+       'clip', result.filePath, result.thumbnailPath,
+       result.width, result.height, result.duration,
+       req.user.id, url]
+    );
+
+    if (tags) {
+      await insertTags(pool, id, tags);
+    }
+
+    res.status(201).json({ id, url: `${config.baseUrl}/v/${id}` });
+  } catch (err) {
+    console.error('Error creating clip:', err);
+    res.status(500).json({ error: err.message || 'Failed to create clip' });
+  }
+});
+
 // Upload video
-router.post('/', upload.single('video'), async (req, res) => {
+router.post('/', requireAuth, requireApproved, upload.single('video'), async (req, res) => {
   try {
     const pool = getPool();
     const id = nanoid(10);
@@ -237,17 +294,13 @@ router.post('/', upload.single('video'), async (req, res) => {
       const thumbPath = path.join(config.uploadsDir, 'thumbnails', thumbFilename);
 
       try {
-        // Try to transcode
         await transcodeVideo(inputPath, outputPath);
         filePath = outputPath;
-
-        // Clean up original if different
         if (inputPath !== outputPath && fs.existsSync(inputPath)) {
           fs.unlinkSync(inputPath);
         }
       } catch (ffmpegErr) {
         console.warn('ffmpeg transcode failed, using original file:', ffmpegErr.message);
-        // Use original file as-is
         filePath = inputPath;
       }
 
@@ -271,24 +324,15 @@ router.post('/', upload.single('video'), async (req, res) => {
     }
 
     await pool.query(
-      `INSERT INTO videos (id, title, description, category_id, source_type, file_path, embed_url, thumbnail_path, width, height, duration)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      `INSERT INTO videos (id, title, description, category_id, source_type, file_path, embed_url, thumbnail_path, width, height, duration, user_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
       [id, title, description || null, category_id ? parseInt(category_id) : null,
        source_type || 'upload', filePath, embed_url || null, thumbnailPath,
-       width, height, duration]
+       width, height, duration, req.user.id]
     );
 
-    // Handle tags
     if (tags) {
-      const tagList = typeof tags === 'string' ? tags.split(',').map((t) => t.trim()).filter(Boolean) : tags;
-      for (const tagName of tagList) {
-        const tagSlug = slugify(tagName);
-        await pool.query('INSERT INTO tags (name, slug) VALUES ($1, $2) ON CONFLICT DO NOTHING', [tagName, tagSlug]);
-        const { rows: tagRows } = await pool.query('SELECT id FROM tags WHERE slug = $1', [tagSlug]);
-        if (tagRows.length > 0) {
-          await pool.query('INSERT INTO video_tags (video_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [id, tagRows[0].id]);
-        }
-      }
+      await insertTags(pool, id, tags);
     }
 
     res.status(201).json({ id, url: `${config.baseUrl}/v/${id}` });
@@ -298,11 +342,11 @@ router.post('/', upload.single('video'), async (req, res) => {
   }
 });
 
-// Delete video
-router.delete('/:id', async (req, res) => {
+// Delete video (owner or admin)
+router.delete('/:id', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const { rows } = await pool.query('SELECT file_path, thumbnail_path FROM videos WHERE id = $1', [req.params.id]);
+    const { rows } = await pool.query('SELECT file_path, thumbnail_path, user_id FROM videos WHERE id = $1', [req.params.id]);
 
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Video not found' });
@@ -310,7 +354,11 @@ router.delete('/:id', async (req, res) => {
 
     const video = rows[0];
 
-    // Delete files
+    // Check ownership or admin
+    if (video.user_id !== req.user.id && !req.user.is_admin) {
+      return res.status(403).json({ error: 'Not authorized to delete this video' });
+    }
+
     if (video.file_path && fs.existsSync(video.file_path)) {
       fs.unlinkSync(video.file_path);
     }

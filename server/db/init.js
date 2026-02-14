@@ -1,4 +1,5 @@
 const { Pool } = require('pg');
+const bcrypt = require('bcryptjs');
 const config = require('../config');
 
 let pool = null;
@@ -21,7 +22,20 @@ function getPool() {
 async function initDb() {
   const p = getPool();
 
-  // Create tables
+  // Create users table
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      email TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      username TEXT UNIQUE NOT NULL,
+      is_approved BOOLEAN DEFAULT FALSE,
+      is_admin BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+
+  // Create categories table
   await p.query(`
     CREATE TABLE IF NOT EXISTS categories (
       id SERIAL PRIMARY KEY,
@@ -30,6 +44,7 @@ async function initDb() {
     )
   `);
 
+  // Create videos table
   await p.query(`
     CREATE TABLE IF NOT EXISTS videos (
       id TEXT PRIMARY KEY,
@@ -49,6 +64,24 @@ async function initDb() {
     )
   `);
 
+  // Add user_id and source_url columns to videos (idempotent)
+  await p.query(`
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'videos' AND column_name = 'user_id') THEN
+        ALTER TABLE videos ADD COLUMN user_id INTEGER REFERENCES users(id);
+      END IF;
+    END $$
+  `);
+
+  await p.query(`
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'videos' AND column_name = 'source_url') THEN
+        ALTER TABLE videos ADD COLUMN source_url TEXT;
+      END IF;
+    END $$
+  `);
+
+  // Create tags table
   await p.query(`
     CREATE TABLE IF NOT EXISTS tags (
       id SERIAL PRIMARY KEY,
@@ -57,6 +90,7 @@ async function initDb() {
     )
   `);
 
+  // Create video_tags table
   await p.query(`
     CREATE TABLE IF NOT EXISTS video_tags (
       video_id TEXT NOT NULL,
@@ -67,21 +101,53 @@ async function initDb() {
     )
   `);
 
-  // Seed default categories
-  const defaultCategories = [
-    { name: 'Gaming', slug: 'gaming' },
-    { name: 'Music', slug: 'music' },
-    { name: 'Comedy', slug: 'comedy' },
-    { name: 'Sports', slug: 'sports' },
-    { name: 'Education', slug: 'education' },
+  // Replace old categories with adult categories
+  const oldCategories = ['Gaming', 'Music', 'Comedy', 'Sports', 'Education'];
+  for (const name of oldCategories) {
+    await p.query('DELETE FROM categories WHERE name = $1', [name]);
+  }
+
+  const adultCategories = [
+    { name: 'Amateur', slug: 'amateur' },
+    { name: 'Anal', slug: 'anal' },
+    { name: 'Asian', slug: 'asian' },
+    { name: 'BBW', slug: 'bbw' },
+    { name: 'Big Tits', slug: 'big-tits' },
+    { name: 'Blonde', slug: 'blonde' },
+    { name: 'Blowjob', slug: 'blowjob' },
+    { name: 'Brunette', slug: 'brunette' },
+    { name: 'Creampie', slug: 'creampie' },
+    { name: 'Cumshot', slug: 'cumshot' },
+    { name: 'Ebony', slug: 'ebony' },
+    { name: 'Hardcore', slug: 'hardcore' },
+    { name: 'Latina', slug: 'latina' },
+    { name: 'Lesbian', slug: 'lesbian' },
+    { name: 'MILF', slug: 'milf' },
+    { name: 'POV', slug: 'pov' },
+    { name: 'Redhead', slug: 'redhead' },
+    { name: 'Teen (18+)', slug: 'teen-18' },
+    { name: 'Threesome', slug: 'threesome' },
     { name: 'Other', slug: 'other' },
   ];
 
-  for (const cat of defaultCategories) {
+  for (const cat of adultCategories) {
     await p.query(
       'INSERT INTO categories (name, slug) VALUES ($1, $2) ON CONFLICT DO NOTHING',
       [cat.name, cat.slug]
     );
+  }
+
+  // Seed admin user from env vars
+  if (config.adminEmail && config.adminPassword) {
+    const { rows } = await p.query('SELECT id FROM users WHERE email = $1', [config.adminEmail]);
+    if (rows.length === 0) {
+      const hash = await bcrypt.hash(config.adminPassword, 10);
+      await p.query(
+        'INSERT INTO users (email, password_hash, username, is_approved, is_admin) VALUES ($1, $2, $3, TRUE, TRUE)',
+        [config.adminEmail, hash, 'admin']
+      );
+      console.log('Admin user seeded:', config.adminEmail);
+    }
   }
 
   return p;

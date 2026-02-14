@@ -5,7 +5,7 @@ function isDirectVideoUrl(url) {
 }
 
 // Convert page URLs to their embeddable iframe URLs
-function toEmbedUrl(url) {
+export function toEmbedUrl(url) {
   try {
     const u = new URL(url);
     const host = u.hostname.replace('www.', '');
@@ -65,6 +65,53 @@ function toEmbedUrl(url) {
     // Invalid URL, return as-is
   }
   return url;
+}
+
+// Clip player: native video tag for hosted MP4 clips (autoplay, loop, muted)
+export function ClipPlayer({ video }) {
+  const videoRef = useRef(null);
+
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.load();
+    }
+  }, [video.id]);
+
+  return (
+    <div className="video-player clip-player">
+      <video
+        ref={videoRef}
+        controls
+        autoPlay
+        loop
+        muted
+        playsInline
+        preload="auto"
+        poster={video.thumbnail_path ? `/api/videos/${video.id}/thumbnail` : undefined}
+      >
+        <source src={`/api/videos/${video.id}/file`} type="video/mp4" />
+        Your browser does not support the video tag.
+      </video>
+    </div>
+  );
+}
+
+// Full video embed: iframe from source provider
+export function FullVideoEmbed({ sourceUrl }) {
+  if (!sourceUrl) return null;
+  const embedSrc = toEmbedUrl(sourceUrl);
+
+  return (
+    <div className="video-player full-embed">
+      <iframe
+        src={embedSrc}
+        width="100%"
+        style={{ aspectRatio: '16/9', border: 'none' }}
+        allowFullScreen
+        allow="autoplay; encrypted-media; fullscreen"
+      />
+    </div>
+  );
 }
 
 export default function VideoPlayer({ video }) {

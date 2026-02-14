@@ -20,6 +20,7 @@ app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
 // API routes
+app.use('/api/auth', require('./routes/auth'));
 app.use('/api/videos', require('./routes/videos'));
 app.use('/api/categories', require('./routes/categories'));
 app.use('/api/tags', require('./routes/tags'));

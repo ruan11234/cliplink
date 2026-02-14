@@ -14,7 +14,7 @@
   <meta property="og:url" content="<%= baseUrl %>/v/<%= video.id %>" />
   <meta property="og:site_name" content="ClipLink" />
 
-  <% if (video.source_type === 'upload') { %>
+  <% if (video.source_type === 'upload' || video.source_type === 'clip') { %>
   <meta property="og:video" content="<%= baseUrl %>/api/videos/<%= video.id %>/file" />
   <meta property="og:video:secure_url" content="<%= baseUrl %>/api/videos/<%= video.id %>/file" />
   <meta property="og:video:type" content="video/mp4" />
@@ -63,7 +63,7 @@
   <p><%= video.description %></p>
   <% } %>
   <video controls autoplay muted loop width="<%= video.width %>" height="<%= video.height %>">
-    <% if (video.source_type === 'upload') { %>
+    <% if (video.source_type === 'upload' || video.source_type === 'clip') { %>
     <source src="<%= baseUrl %>/api/videos/<%= video.id %>/file" type="video/mp4" />
     <% } %>
   </video>

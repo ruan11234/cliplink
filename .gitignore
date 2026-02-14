@@ -5,5 +5,7 @@ server/uploads/videos/*
 server/uploads/thumbnails/*
 !server/uploads/videos/.gitkeep
 !server/uploads/thumbnails/.gitkeep
+server/uploads/temp/*
+!server/uploads/temp/.gitkeep
 .env
 .DS_Store

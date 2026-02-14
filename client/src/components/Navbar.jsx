@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import axios from 'axios';
+import { useAuth } from '../context/AuthContext';
 
 export default function Navbar() {
+  const { user, logout } = useAuth();
   const [categories, setCategories] = useState([]);
   const [menuOpen, setMenuOpen] = useState(false);
   const location = useLocation();
@@ -35,9 +37,30 @@ export default function Navbar() {
               {cat.name}
             </Link>
           ))}
-          <Link to="/upload" className={`upload-link ${location.pathname === '/upload' ? 'active' : ''}`}>
-            Upload
-          </Link>
+
+          <div className="navbar-auth">
+            {!user ? (
+              <Link to="/login" className={`auth-link ${location.pathname === '/login' ? 'active' : ''}`}>
+                Login
+              </Link>
+            ) : (
+              <>
+                {user.is_approved ? (
+                  <Link to="/create" className={`upload-link ${location.pathname === '/create' ? 'active' : ''}`}>
+                    Create Clip
+                  </Link>
+                ) : (
+                  <span className="pending-badge">Pending Approval</span>
+                )}
+                {user.is_admin && (
+                  <Link to="/admin" className={`admin-link ${location.pathname === '/admin' ? 'active' : ''}`}>
+                    Admin
+                  </Link>
+                )}
+                <button className="logout-btn" onClick={logout}>Logout</button>
+              </>
+            )}
+          </div>
         </div>
       </div>
     </nav>
