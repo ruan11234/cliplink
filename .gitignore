@@ -1,0 +1,9 @@
+node_modules/
+client/dist/
+server/cliplink.db
+server/uploads/videos/*
+server/uploads/thumbnails/*
+!server/uploads/videos/.gitkeep
+!server/uploads/thumbnails/.gitkeep
+.env
+.DS_Store

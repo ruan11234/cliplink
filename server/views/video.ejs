@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title><%= video.title %> - ClipLink</title>
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="video.other" />
+  <meta property="og:title" content="<%= video.title %>" />
+  <% if (video.description) { %>
+  <meta property="og:description" content="<%= video.description %>" />
+  <% } %>
+  <meta property="og:url" content="<%= baseUrl %>/v/<%= video.id %>" />
+  <meta property="og:site_name" content="ClipLink" />
+
+  <% if (video.source_type === 'upload') { %>
+  <meta property="og:video" content="<%= baseUrl %>/api/videos/<%= video.id %>/file" />
+  <meta property="og:video:secure_url" content="<%= baseUrl %>/api/videos/<%= video.id %>/file" />
+  <meta property="og:video:type" content="video/mp4" />
+  <meta property="og:video:width" content="<%= video.width %>" />
+  <meta property="og:video:height" content="<%= video.height %>" />
+  <% } %>
+
+  <% if (video.thumbnail_path) { %>
+  <meta property="og:image" content="<%= baseUrl %>/api/videos/<%= video.id %>/thumbnail" />
+  <meta property="og:image:width" content="640" />
+  <meta property="og:image:height" content="360" />
+  <% } %>
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="player" />
+  <meta name="twitter:title" content="<%= video.title %>" />
+  <% if (video.description) { %>
+  <meta name="twitter:description" content="<%= video.description %>" />
+  <% } %>
+  <meta name="twitter:player" content="<%= baseUrl %>/embed/<%= video.id %>" />
+  <meta name="twitter:player:width" content="<%= video.width %>" />
+  <meta name="twitter:player:height" content="<%= video.height %>" />
+  <% if (video.thumbnail_path) { %>
+  <meta name="twitter:image" content="<%= baseUrl %>/api/videos/<%= video.id %>/thumbnail" />
+  <% } %>
+
+  <!-- oEmbed -->
+  <link rel="alternate" type="application/json+oembed"
+        href="<%= baseUrl %>/oembed?url=<%= encodeURIComponent(baseUrl + '/v/' + video.id) %>"
+        title="<%= video.title %>" />
+
+  <script>
+    // Redirect browsers (not bots) to the SPA
+    if (!/bot|crawl|spider|scraper|facebook|twitter|reddit|discord|slack|telegram|whatsapp/i.test(navigator.userAgent)) {
+      window.location.replace('/video/' + '<%= video.id %>');
+    }
+  </script>
+</head>
+<body>
+  <h1><%= video.title %></h1>
+  <% if (video.description) { %>
+  <p><%= video.description %></p>
+  <% } %>
+  <video controls autoplay muted loop width="<%= video.width %>" height="<%= video.height %>">
+    <% if (video.source_type === 'upload') { %>
+    <source src="<%= baseUrl %>/api/videos/<%= video.id %>/file" type="video/mp4" />
+    <% } %>
+  </video>
+</body>
+</html>

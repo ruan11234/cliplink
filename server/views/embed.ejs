@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title><%= video.title %> - ClipLink</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+  </style>
+</head>
+<body>
+  <video
+    id="player"
+    autoplay
+    loop
+    muted
+    playsinline
+    preload="auto"
+    <% if (video.thumbnail_path) { %>
+    poster="<%= baseUrl %>/api/videos/<%= video.id %>/thumbnail"
+    <% } %>
+  >
+    <source src="<%= videoSrc %>" type="video/mp4" />
+  </video>
+  <script>
+    const video = document.getElementById('player');
+    video.play().catch(() => {});
+    // Allow unmuting on click
+    video.addEventListener('click', () => {
+      video.muted = !video.muted;
+    });
+  </script>
+</body>
+</html>
