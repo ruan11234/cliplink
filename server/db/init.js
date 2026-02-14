@@ -8,9 +8,11 @@ function getPool() {
 
   pool = new Pool({
     connectionString: config.databaseUrl,
-    ssl: config.databaseUrl && config.databaseUrl.includes('railway')
-      ? { rejectUnauthorized: false }
-      : false,
+    ssl: config.databaseUrl && config.databaseUrl.includes('railway.internal')
+      ? false
+      : config.databaseUrl && config.databaseUrl.includes('railway')
+        ? { rejectUnauthorized: false }
+        : false,
   });
 
   return pool;
