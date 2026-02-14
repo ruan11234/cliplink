@@ -2,8 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const config = require('./config');
-const { getDb } = require('./db/init');
-const { resultToObjects } = require('./routes/videos');
+const { initDb, getPool } = require('./db/init');
 
 const app = express();
 
@@ -26,15 +25,14 @@ app.use('/embed', require('./routes/embed'));
 // SSR video page for bots/scrapers (Reddit, Twitter, etc.)
 app.get('/v/:id', async (req, res) => {
   try {
-    const db = await getDb();
-    const result = db.exec(
+    const pool = getPool();
+    const { rows } = await pool.query(
       `SELECT v.*, c.name as category_name, c.slug as category_slug
        FROM videos v
        LEFT JOIN categories c ON v.category_id = c.id
-       WHERE v.id = ?`,
+       WHERE v.id = $1`,
       [req.params.id]
     );
-    const rows = resultToObjects(result);
 
     if (rows.length === 0) {
       return res.status(404).send('Video not found');
@@ -70,7 +68,7 @@ app.get('*', (req, res) => {
 
 // Initialize DB and start server
 async function start() {
-  await getDb();
+  await initDb();
   app.listen(config.port, () => {
     console.log(`ClipLink server running at ${config.baseUrl}`);
   });

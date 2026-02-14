@@ -1,15 +1,13 @@
 const express = require('express');
 const config = require('../config');
-const { getDb } = require('../db/init');
-const { resultToObjects } = require('./videos');
+const { getPool } = require('../db/init');
 
 const router = express.Router();
 
 router.get('/:id', async (req, res) => {
   try {
-    const db = await getDb();
-    const result = db.exec('SELECT * FROM videos WHERE id = ?', [req.params.id]);
-    const rows = resultToObjects(result);
+    const pool = getPool();
+    const { rows } = await pool.query('SELECT * FROM videos WHERE id = $1', [req.params.id]);
 
     if (rows.length === 0) {
       return res.status(404).send('Video not found');

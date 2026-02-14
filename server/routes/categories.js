@@ -1,14 +1,13 @@
 const express = require('express');
-const { getDb } = require('../db/init');
-const { resultToObjects } = require('./videos');
+const { getPool } = require('../db/init');
 
 const router = express.Router();
 
 router.get('/', async (req, res) => {
   try {
-    const db = await getDb();
-    const result = db.exec('SELECT * FROM categories ORDER BY name');
-    res.json(resultToObjects(result));
+    const pool = getPool();
+    const { rows } = await pool.query('SELECT * FROM categories ORDER BY name');
+    res.json(rows);
   } catch (err) {
     console.error('Error listing categories:', err);
     res.status(500).json({ error: 'Failed to list categories' });
@@ -17,9 +16,8 @@ router.get('/', async (req, res) => {
 
 router.get('/:slug', async (req, res) => {
   try {
-    const db = await getDb();
-    const result = db.exec('SELECT * FROM categories WHERE slug = ?', [req.params.slug]);
-    const rows = resultToObjects(result);
+    const pool = getPool();
+    const { rows } = await pool.query('SELECT * FROM categories WHERE slug = $1', [req.params.slug]);
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Category not found' });
     }

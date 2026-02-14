@@ -1,36 +1,34 @@
-const initSQL = require('sql.js');
-const fs = require('fs');
-const path = require('path');
+const { Pool } = require('pg');
+const config = require('../config');
 
-const DB_PATH = path.join(__dirname, '..', 'cliplink.db');
+let pool = null;
 
-let db = null;
+function getPool() {
+  if (pool) return pool;
 
-async function getDb() {
-  if (db) return db;
+  pool = new Pool({
+    connectionString: config.databaseUrl,
+    ssl: config.databaseUrl && config.databaseUrl.includes('railway')
+      ? { rejectUnauthorized: false }
+      : false,
+  });
 
-  const SQL = await initSQL();
+  return pool;
+}
 
-  let data = null;
-  if (fs.existsSync(DB_PATH)) {
-    data = fs.readFileSync(DB_PATH);
-  }
-
-  db = new SQL.Database(data ? data : undefined);
-
-  // Enable WAL mode equivalent and foreign keys
-  db.run('PRAGMA foreign_keys = ON;');
+async function initDb() {
+  const p = getPool();
 
   // Create tables
-  db.run(`
+  await p.query(`
     CREATE TABLE IF NOT EXISTS categories (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       name TEXT UNIQUE NOT NULL,
       slug TEXT UNIQUE NOT NULL
     )
   `);
 
-  db.run(`
+  await p.query(`
     CREATE TABLE IF NOT EXISTS videos (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
@@ -44,20 +42,20 @@ async function getDb() {
       height INTEGER DEFAULT 1080,
       duration REAL,
       views INTEGER DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      created_at TIMESTAMP DEFAULT NOW(),
       FOREIGN KEY (category_id) REFERENCES categories(id)
     )
   `);
 
-  db.run(`
+  await p.query(`
     CREATE TABLE IF NOT EXISTS tags (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       name TEXT UNIQUE NOT NULL,
       slug TEXT UNIQUE NOT NULL
     )
   `);
 
-  db.run(`
+  await p.query(`
     CREATE TABLE IF NOT EXISTS video_tags (
       video_id TEXT NOT NULL,
       tag_id INTEGER NOT NULL,
@@ -77,21 +75,14 @@ async function getDb() {
     { name: 'Other', slug: 'other' },
   ];
 
-  const insertCat = db.prepare('INSERT OR IGNORE INTO categories (name, slug) VALUES (?, ?)');
   for (const cat of defaultCategories) {
-    insertCat.run([cat.name, cat.slug]);
+    await p.query(
+      'INSERT INTO categories (name, slug) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+      [cat.name, cat.slug]
+    );
   }
-  insertCat.free();
 
-  saveDb();
-
-  return db;
+  return p;
 }
 
-function saveDb() {
-  if (!db) return;
-  const data = db.export();
-  fs.writeFileSync(DB_PATH, Buffer.from(data));
-}
-
-module.exports = { getDb, saveDb };
+module.exports = { getPool, initDb };

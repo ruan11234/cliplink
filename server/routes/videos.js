@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const { nanoid } = require('nanoid');
 const config = require('../config');
-const { getDb, saveDb } = require('../db/init');
+const { getPool } = require('../db/init');
 const { transcodeVideo, generateThumbnail, getVideoMetadata } = require('../services/videoProcessor');
 
 const router = express.Router();
@@ -37,7 +37,7 @@ function slugify(text) {
 // List videos (with optional category/tag filters)
 router.get('/', async (req, res) => {
   try {
-    const db = await getDb();
+    const pool = getPool();
     const { category, tag, search, limit = 50, offset = 0 } = req.query;
 
     let query = `
@@ -47,11 +47,7 @@ router.get('/', async (req, res) => {
     `;
     const params = [];
     const conditions = [];
-
-    if (category) {
-      conditions.push('c.slug = ?');
-      params.push(category);
-    }
+    let paramIndex = 1;
 
     if (tag) {
       query = `
@@ -61,37 +57,45 @@ router.get('/', async (req, res) => {
         INNER JOIN video_tags vt ON v.id = vt.video_id
         INNER JOIN tags t ON vt.tag_id = t.id
       `;
-      conditions.push('t.slug = ?');
+    }
+
+    if (category) {
+      conditions.push(`c.slug = $${paramIndex++}`);
+      params.push(category);
+    }
+
+    if (tag) {
+      conditions.push(`t.slug = $${paramIndex++}`);
       params.push(tag);
     }
 
     if (search) {
-      conditions.push('(v.title LIKE ? OR v.description LIKE ?)');
+      conditions.push(`(v.title ILIKE $${paramIndex} OR v.description ILIKE $${paramIndex + 1})`);
       params.push(`%${search}%`, `%${search}%`);
+      paramIndex += 2;
     }
 
     if (conditions.length > 0) {
       query += ' WHERE ' + conditions.join(' AND ');
     }
 
-    query += ' ORDER BY v.created_at DESC LIMIT ? OFFSET ?';
+    query += ` ORDER BY v.created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
     params.push(parseInt(limit), parseInt(offset));
 
-    const videos = db.exec(query, params);
-    const rows = resultToObjects(videos);
+    const { rows: videos } = await pool.query(query, params);
 
     // Attach tags to each video
-    for (const video of rows) {
-      const tagResult = db.exec(
+    for (const video of videos) {
+      const { rows: tags } = await pool.query(
         `SELECT t.name, t.slug FROM tags t
          INNER JOIN video_tags vt ON t.id = vt.tag_id
-         WHERE vt.video_id = ?`,
+         WHERE vt.video_id = $1`,
         [video.id]
       );
-      video.tags = resultToObjects(tagResult);
+      video.tags = tags;
     }
 
-    res.json(rows);
+    res.json(videos);
   } catch (err) {
     console.error('Error listing videos:', err);
     res.status(500).json({ error: 'Failed to list videos' });
@@ -101,15 +105,14 @@ router.get('/', async (req, res) => {
 // Get single video
 router.get('/:id', async (req, res) => {
   try {
-    const db = await getDb();
-    const result = db.exec(
+    const pool = getPool();
+    const { rows } = await pool.query(
       `SELECT v.*, c.name as category_name, c.slug as category_slug
        FROM videos v
        LEFT JOIN categories c ON v.category_id = c.id
-       WHERE v.id = ?`,
+       WHERE v.id = $1`,
       [req.params.id]
     );
-    const rows = resultToObjects(result);
 
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Video not found' });
@@ -117,13 +120,13 @@ router.get('/:id', async (req, res) => {
 
     const video = rows[0];
 
-    const tagResult = db.exec(
+    const { rows: tags } = await pool.query(
       `SELECT t.name, t.slug FROM tags t
        INNER JOIN video_tags vt ON t.id = vt.tag_id
-       WHERE vt.video_id = ?`,
+       WHERE vt.video_id = $1`,
       [video.id]
     );
-    video.tags = resultToObjects(tagResult);
+    video.tags = tags;
 
     res.json(video);
   } catch (err) {
@@ -135,9 +138,8 @@ router.get('/:id', async (req, res) => {
 // Serve video file with range request support
 router.get('/:id/file', async (req, res) => {
   try {
-    const db = await getDb();
-    const result = db.exec('SELECT file_path FROM videos WHERE id = ?', [req.params.id]);
-    const rows = resultToObjects(result);
+    const pool = getPool();
+    const { rows } = await pool.query('SELECT file_path FROM videos WHERE id = $1', [req.params.id]);
 
     if (rows.length === 0 || !rows[0].file_path) {
       return res.status(404).json({ error: 'Video file not found' });
@@ -182,9 +184,8 @@ router.get('/:id/file', async (req, res) => {
 // Serve thumbnail
 router.get('/:id/thumbnail', async (req, res) => {
   try {
-    const db = await getDb();
-    const result = db.exec('SELECT thumbnail_path FROM videos WHERE id = ?', [req.params.id]);
-    const rows = resultToObjects(result);
+    const pool = getPool();
+    const { rows } = await pool.query('SELECT thumbnail_path FROM videos WHERE id = $1', [req.params.id]);
 
     if (rows.length === 0 || !rows[0].thumbnail_path) {
       return res.status(404).json({ error: 'Thumbnail not found' });
@@ -205,9 +206,8 @@ router.get('/:id/thumbnail', async (req, res) => {
 // Increment view count
 router.post('/:id/view', async (req, res) => {
   try {
-    const db = await getDb();
-    db.run('UPDATE videos SET views = views + 1 WHERE id = ?', [req.params.id]);
-    saveDb();
+    const pool = getPool();
+    await pool.query('UPDATE videos SET views = views + 1 WHERE id = $1', [req.params.id]);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Failed to increment view' });
@@ -217,7 +217,7 @@ router.post('/:id/view', async (req, res) => {
 // Upload video
 router.post('/', upload.single('video'), async (req, res) => {
   try {
-    const db = await getDb();
+    const pool = getPool();
     const id = nanoid(10);
     const { title, description, category_id, tags, source_type, embed_url } = req.body;
 
@@ -270,9 +270,9 @@ router.post('/', upload.single('video'), async (req, res) => {
       return res.status(400).json({ error: 'No video file or embed URL provided' });
     }
 
-    db.run(
+    await pool.query(
       `INSERT INTO videos (id, title, description, category_id, source_type, file_path, embed_url, thumbnail_path, width, height, duration)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [id, title, description || null, category_id ? parseInt(category_id) : null,
        source_type || 'upload', filePath, embed_url || null, thumbnailPath,
        width, height, duration]
@@ -283,16 +283,13 @@ router.post('/', upload.single('video'), async (req, res) => {
       const tagList = typeof tags === 'string' ? tags.split(',').map((t) => t.trim()).filter(Boolean) : tags;
       for (const tagName of tagList) {
         const tagSlug = slugify(tagName);
-        db.run('INSERT OR IGNORE INTO tags (name, slug) VALUES (?, ?)', [tagName, tagSlug]);
-        const tagResult = db.exec('SELECT id FROM tags WHERE slug = ?', [tagSlug]);
-        const tagRows = resultToObjects(tagResult);
+        await pool.query('INSERT INTO tags (name, slug) VALUES ($1, $2) ON CONFLICT DO NOTHING', [tagName, tagSlug]);
+        const { rows: tagRows } = await pool.query('SELECT id FROM tags WHERE slug = $1', [tagSlug]);
         if (tagRows.length > 0) {
-          db.run('INSERT OR IGNORE INTO video_tags (video_id, tag_id) VALUES (?, ?)', [id, tagRows[0].id]);
+          await pool.query('INSERT INTO video_tags (video_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [id, tagRows[0].id]);
         }
       }
     }
-
-    saveDb();
 
     res.status(201).json({ id, url: `${config.baseUrl}/v/${id}` });
   } catch (err) {
@@ -304,9 +301,8 @@ router.post('/', upload.single('video'), async (req, res) => {
 // Delete video
 router.delete('/:id', async (req, res) => {
   try {
-    const db = await getDb();
-    const result = db.exec('SELECT file_path, thumbnail_path FROM videos WHERE id = ?', [req.params.id]);
-    const rows = resultToObjects(result);
+    const pool = getPool();
+    const { rows } = await pool.query('SELECT file_path, thumbnail_path FROM videos WHERE id = $1', [req.params.id]);
 
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Video not found' });
@@ -322,9 +318,8 @@ router.delete('/:id', async (req, res) => {
       fs.unlinkSync(video.thumbnail_path);
     }
 
-    db.run('DELETE FROM video_tags WHERE video_id = ?', [req.params.id]);
-    db.run('DELETE FROM videos WHERE id = ?', [req.params.id]);
-    saveDb();
+    await pool.query('DELETE FROM video_tags WHERE video_id = $1', [req.params.id]);
+    await pool.query('DELETE FROM videos WHERE id = $1', [req.params.id]);
 
     res.json({ success: true });
   } catch (err) {
@@ -333,18 +328,4 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-// Helper: convert sql.js exec result to array of objects
-function resultToObjects(execResult) {
-  if (!execResult || execResult.length === 0) return [];
-  const { columns, values } = execResult[0];
-  return values.map((row) => {
-    const obj = {};
-    columns.forEach((col, i) => {
-      obj[col] = row[i];
-    });
-    return obj;
-  });
-}
-
 module.exports = router;
-module.exports.resultToObjects = resultToObjects;
