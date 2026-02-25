@@ -9,6 +9,7 @@ import CreateClip from './pages/CreateClip';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Admin from './pages/Admin';
+import Feed from './pages/Feed';
 
 export default function App() {
   return (
@@ -17,6 +18,7 @@ export default function App() {
       <main className="main-content">
         <Routes>
           <Route path="/" element={<Home />} />
+          <Route path="/feed" element={<Feed />} />
           <Route path="/category/:slug" element={<Category />} />
           <Route path="/tag/:slug" element={<TagPage />} />
           <Route path="/video/:id" element={<VideoPage />} />

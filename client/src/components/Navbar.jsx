@@ -28,6 +28,7 @@ export default function Navbar() {
 
         <div className={`navbar-links ${menuOpen ? 'open' : ''}`}>
           <Link to="/" className={location.pathname === '/' ? 'active' : ''}>Home</Link>
+          <Link to="/feed" className={location.pathname === '/feed' ? 'active' : ''}>Feed</Link>
           {categories.map((cat) => (
             <Link
               key={cat.id}
