@@ -37,9 +37,8 @@ function downloadSection(url, startSeconds, duration, outputPath) {
     const section = `*${startSeconds}-${end}`;
 
     const args = [
-      '-f', 'best[height<=480][ext=mp4]/best[height<=480]/best[ext=mp4]/best',
+      '-f', 'worst[ext=mp4]/worst',
       '--download-sections', section,
-      '--force-keyframes-at-cuts',
       '--merge-output-format', 'mp4',
       '-o', outputPath,
       '--no-playlist',
