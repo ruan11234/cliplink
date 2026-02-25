@@ -139,14 +139,20 @@ async function initDb() {
 
   // Seed admin user from env vars
   if (config.adminEmail && config.adminPassword) {
+    const hash = await bcrypt.hash(config.adminPassword, 10);
     const { rows } = await p.query('SELECT id FROM users WHERE email = $1', [config.adminEmail]);
     if (rows.length === 0) {
-      const hash = await bcrypt.hash(config.adminPassword, 10);
       await p.query(
         'INSERT INTO users (email, password_hash, username, is_approved, is_admin) VALUES ($1, $2, $3, TRUE, TRUE)',
         [config.adminEmail, hash, 'admin']
       );
       console.log('Admin user seeded:', config.adminEmail);
+    } else {
+      await p.query(
+        'UPDATE users SET password_hash = $1, is_approved = TRUE, is_admin = TRUE WHERE email = $2',
+        [hash, config.adminEmail]
+      );
+      console.log('Admin user updated:', config.adminEmail);
     }
   }
 
