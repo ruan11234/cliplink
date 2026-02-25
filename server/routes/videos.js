@@ -7,6 +7,7 @@ const config = require('../config');
 const { getPool } = require('../db/init');
 const { transcodeVideo, generateThumbnail, getVideoMetadata } = require('../services/videoProcessor');
 const { createClip } = require('../services/clipCreator');
+const { fetchThumbnail } = require('../services/thumbnailFetcher');
 const { requireAuth, requireApproved } = require('../middleware/auth');
 
 const router = express.Router();
@@ -231,21 +232,76 @@ router.post('/:id/view', async (req, res) => {
   }
 });
 
-// Create clip from URL
+// Add video by URL (no download, just metadata + thumbnail)
+router.post('/add', requireAuth, requireApproved, async (req, res) => {
+  try {
+    const pool = getPool();
+    const id = nanoid(10);
+    const { url, title, description, category_id, tags } = req.body;
+
+    if (!url || !title) {
+      return res.status(400).json({ error: 'URL and title are required' });
+    }
+
+    // Fetch thumbnail (lightweight, no video download)
+    let thumbnailPath = null;
+    try {
+      thumbnailPath = await fetchThumbnail(url, id);
+    } catch (err) {
+      console.warn('Thumbnail fetch failed:', err.message);
+    }
+
+    await pool.query(
+      `INSERT INTO videos (id, title, description, category_id, source_type, embed_url, thumbnail_path, user_id, source_url)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [id, title, description || null, category_id ? parseInt(category_id) : null,
+       'embed', url, thumbnailPath, req.user.id, url]
+    );
+
+    if (tags) {
+      await insertTags(pool, id, tags);
+    }
+
+    res.status(201).json({ id, url: `${config.baseUrl}/v/${id}` });
+  } catch (err) {
+    console.error('Error adding video:', err);
+    res.status(500).json({ error: err.message || 'Failed to add video' });
+  }
+});
+
+// Create clip from URL or existing video
 router.post('/clip', requireAuth, requireApproved, async (req, res) => {
   try {
     const pool = getPool();
     const id = nanoid(10);
-    const { url, start_time, duration, title, description, category_id, tags } = req.body;
+    const { video_id, url, start_time, duration, title, description, category_id, tags } = req.body;
 
-    if (!url || !title) {
+    let sourceUrl = url;
+    let clipCategoryId = category_id ? parseInt(category_id) : null;
+    let clipDescription = description || null;
+
+    // If creating from an existing video, look up its URL and metadata
+    if (video_id) {
+      const { rows } = await pool.query(
+        'SELECT embed_url, source_url, category_id, description FROM videos WHERE id = $1',
+        [video_id]
+      );
+      if (rows.length === 0) {
+        return res.status(404).json({ error: 'Source video not found' });
+      }
+      const parentVideo = rows[0];
+      sourceUrl = parentVideo.embed_url || parentVideo.source_url;
+      if (!clipCategoryId) clipCategoryId = parentVideo.category_id;
+    }
+
+    if (!sourceUrl || !title) {
       return res.status(400).json({ error: 'URL and title are required' });
     }
 
     const clipDuration = Math.min(parseInt(duration) || 59, config.maxClipDuration);
 
     const result = await createClip({
-      url,
+      url: sourceUrl,
       startTime: start_time || '0',
       duration: clipDuration,
       clipId: id,
@@ -254,14 +310,28 @@ router.post('/clip', requireAuth, requireApproved, async (req, res) => {
     await pool.query(
       `INSERT INTO videos (id, title, description, category_id, source_type, file_path, thumbnail_path, width, height, duration, user_id, source_url)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-      [id, title, description || null, category_id ? parseInt(category_id) : null,
+      [id, title, clipDescription, clipCategoryId,
        'clip', result.filePath, result.thumbnailPath,
        result.width, result.height, result.duration,
-       req.user.id, url]
+       req.user.id, sourceUrl]
     );
 
     if (tags) {
       await insertTags(pool, id, tags);
+    }
+
+    // Copy tags from parent video if creating from existing video
+    if (video_id && !tags) {
+      const { rows: parentTags } = await pool.query(
+        'SELECT tag_id FROM video_tags WHERE video_id = $1',
+        [video_id]
+      );
+      for (const { tag_id } of parentTags) {
+        await pool.query(
+          'INSERT INTO video_tags (video_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+          [id, tag_id]
+        );
+      }
     }
 
     res.status(201).json({ id, url: `${config.baseUrl}/v/${id}` });

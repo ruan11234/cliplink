@@ -52,7 +52,7 @@ export default function FeedCard({ video }) {
         {hasInlineVideo ? (
           <video
             ref={videoRef}
-            src={`/api/videos/${video.id}/stream`}
+            src={`/api/videos/${video.id}/file`}
             muted
             loop
             playsInline

@@ -5,7 +5,7 @@ import Home from './pages/Home';
 import Category from './pages/Category';
 import TagPage from './pages/TagPage';
 import VideoPage from './pages/VideoPage';
-import CreateClip from './pages/CreateClip';
+import AddVideo from './pages/AddVideo';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Admin from './pages/Admin';
@@ -22,7 +22,7 @@ export default function App() {
           <Route path="/category/:slug" element={<Category />} />
           <Route path="/tag/:slug" element={<TagPage />} />
           <Route path="/video/:id" element={<VideoPage />} />
-          <Route path="/create" element={<CreateClip />} />
+          <Route path="/add" element={<AddVideo />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
           <Route path="/admin" element={<Admin />} />

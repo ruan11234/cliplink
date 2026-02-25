@@ -47,8 +47,8 @@ export default function Navbar() {
             ) : (
               <>
                 {user.is_approved ? (
-                  <Link to="/create" className={`upload-link ${location.pathname === '/create' ? 'active' : ''}`}>
-                    Create Clip
+                  <Link to="/add" className={`upload-link ${location.pathname === '/add' ? 'active' : ''}`}>
+                    Add Video
                   </Link>
                 ) : (
                   <span className="pending-badge">Pending Approval</span>
