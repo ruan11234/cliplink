@@ -138,6 +138,7 @@ async function initDb() {
   }
 
   // Seed admin user from env vars
+  console.log('Admin env check - ADMIN_EMAIL set:', !!config.adminEmail, '| ADMIN_PASSWORD set:', !!config.adminPassword);
   if (config.adminEmail && config.adminPassword) {
     try {
       const hash = await bcrypt.hash(config.adminPassword, 10);
