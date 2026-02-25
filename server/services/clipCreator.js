@@ -27,15 +27,21 @@ function parseTime(str) {
 }
 
 /**
- * Download video from URL using yt-dlp
+ * Download a section of video from URL using yt-dlp
  */
-function downloadVideo(url) {
+function downloadVideo(url, startSeconds, duration) {
   return new Promise((resolve, reject) => {
     const outputFile = path.join(TEMP_DIR, `${nanoid(12)}.%(ext)s`);
 
+    // Add buffer before/after to ensure we capture the right section
+    const bufferStart = Math.max(0, startSeconds - 2);
+    const bufferEnd = startSeconds + duration + 2;
+    const section = `*${bufferStart}-${bufferEnd}`;
+
     const args = [
-      '-f', 'bestvideo[ext=mp4]+bestaudio/best[ext=mp4]/best',
+      '-f', 'best[ext=mp4]/best',
       '--merge-output-format', 'mp4',
+      '--download-sections', section,
       '-o', outputFile,
       '--no-playlist',
       '--no-check-certificates',
@@ -89,7 +95,7 @@ function clipVideo(inputPath, outputPath, startSeconds, duration) {
         '-crf', '23',
         '-movflags', '+faststart',
         '-pix_fmt', 'yuv420p',
-        '-preset', 'fast',
+        '-preset', 'ultrafast',
       ])
       .output(outputPath)
       .on('end', () => resolve(outputPath))
@@ -147,13 +153,14 @@ async function createClip({ url, startTime, duration = 59, clipId }) {
     const startSeconds = parseTime(startTime);
     const clipDuration = Math.min(duration || 59, config.maxClipDuration);
 
-    // 1. Download
-    downloadedPath = await downloadVideo(url);
+    // 1. Download only the section we need
+    downloadedPath = await downloadVideo(url, startSeconds, clipDuration);
 
-    // 2. Clip
+    // 2. Clip (trim the 2s buffer from the downloaded section)
     const clipFilename = `${clipId}.mp4`;
     const clipPath = path.join(config.uploadsDir, 'videos', clipFilename);
-    await clipVideo(downloadedPath, clipPath, startSeconds, clipDuration);
+    const trimStart = Math.min(2, startSeconds);
+    await clipVideo(downloadedPath, clipPath, trimStart, clipDuration);
 
     // 3. Thumbnail
     const thumbFilename = `${clipId}.jpg`;
