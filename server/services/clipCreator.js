@@ -1,4 +1,4 @@
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const ffmpeg = require('fluent-ffmpeg');
@@ -27,22 +27,13 @@ function parseTime(str) {
 }
 
 /**
- * Download a section of video from URL using yt-dlp
+ * Get the direct stream URL using yt-dlp (no download)
  */
-function downloadVideo(url, startSeconds, duration) {
+function getStreamUrl(url) {
   return new Promise((resolve, reject) => {
-    const outputFile = path.join(TEMP_DIR, `${nanoid(12)}.%(ext)s`);
-
-    // Add buffer before/after to ensure we capture the right section
-    const bufferStart = Math.max(0, startSeconds - 2);
-    const bufferEnd = startSeconds + duration + 2;
-    const section = `*${bufferStart}-${bufferEnd}`;
-
     const args = [
       '-f', 'best[ext=mp4]/best',
-      '--merge-output-format', 'mp4',
-      '--download-sections', section,
-      '-o', outputFile,
+      '--get-url',
       '--no-playlist',
       '--no-check-certificates',
       url,
@@ -57,50 +48,57 @@ function downloadVideo(url, startSeconds, duration) {
 
     const timeout = setTimeout(() => {
       proc.kill('SIGKILL');
-      reject(new Error('Download timed out (5 minutes)'));
-    }, 5 * 60 * 1000);
+      reject(new Error('yt-dlp URL extraction timed out'));
+    }, 60 * 1000);
 
     proc.on('close', (code) => {
       clearTimeout(timeout);
       if (code !== 0) {
         return reject(new Error(`yt-dlp failed (code ${code}): ${stderr.slice(-500)}`));
       }
-
-      // Find the actual output file (yt-dlp replaces %(ext)s)
-      const basePattern = outputFile.replace('.%(ext)s', '');
-      const dir = path.dirname(basePattern);
-      const prefix = path.basename(basePattern);
-      const files = fs.readdirSync(dir).filter((f) => f.startsWith(prefix));
-
-      if (files.length === 0) {
-        return reject(new Error('yt-dlp produced no output file'));
+      const streamUrl = stdout.trim().split('\n')[0];
+      if (!streamUrl) {
+        return reject(new Error('yt-dlp returned no URL'));
       }
-
-      resolve(path.join(dir, files[0]));
+      resolve(streamUrl);
     });
   });
 }
 
 /**
- * Clip a video file with ffmpeg
+ * Clip directly from stream URL using ffmpeg with stream copy (no re-encoding).
+ * -ss before -i enables input seeking (skips to start without reading prior data).
+ * -c copy copies the bitstream without decoding/encoding (minimal memory).
  */
-function clipVideo(inputPath, outputPath, startSeconds, duration) {
+function clipFromStream(streamUrl, outputPath, startSeconds, duration) {
   return new Promise((resolve, reject) => {
-    ffmpeg(inputPath)
-      .setStartTime(startSeconds)
-      .duration(Math.min(duration, config.maxClipDuration))
-      .videoCodec('libx264')
-      .audioCodec('aac')
-      .outputOptions([
-        '-crf', '23',
-        '-movflags', '+faststart',
-        '-pix_fmt', 'yuv420p',
-        '-preset', 'ultrafast',
-      ])
-      .output(outputPath)
-      .on('end', () => resolve(outputPath))
-      .on('error', (err) => reject(err))
-      .run();
+    const args = [
+      '-ss', String(startSeconds),
+      '-i', streamUrl,
+      '-t', String(Math.min(duration, config.maxClipDuration)),
+      '-c', 'copy',
+      '-movflags', '+faststart',
+      '-y',
+      outputPath,
+    ];
+
+    const proc = spawn('ffmpeg', args);
+    let stderr = '';
+
+    proc.stderr.on('data', (data) => { stderr += data.toString(); });
+
+    const timeout = setTimeout(() => {
+      proc.kill('SIGKILL');
+      reject(new Error('ffmpeg clip timed out (3 minutes)'));
+    }, 3 * 60 * 1000);
+
+    proc.on('close', (code) => {
+      clearTimeout(timeout);
+      if (code !== 0) {
+        return reject(new Error(`ffmpeg failed (code ${code}): ${stderr.slice(-500)}`));
+      }
+      resolve(outputPath);
+    });
   });
 }
 
@@ -140,60 +138,49 @@ function getMetadata(videoPath) {
 
 /**
  * Full clip creation pipeline:
- * 1. Download from URL
- * 2. Clip to specified start/duration
+ * 1. Get direct stream URL via yt-dlp
+ * 2. Clip directly from stream with ffmpeg (stream copy, no re-encode)
  * 3. Generate thumbnail
  * 4. Extract metadata
- * 5. Cleanup temp file
  */
 async function createClip({ url, startTime, duration = 59, clipId }) {
-  let downloadedPath = null;
+  const startSeconds = parseTime(startTime);
+  const clipDuration = Math.min(duration || 59, config.maxClipDuration);
 
+  // 1. Get stream URL (no download)
+  const streamUrl = await getStreamUrl(url);
+
+  // 2. Clip directly from stream (stream copy = minimal memory)
+  const clipFilename = `${clipId}.mp4`;
+  const clipPath = path.join(config.uploadsDir, 'videos', clipFilename);
+  await clipFromStream(streamUrl, clipPath, startSeconds, clipDuration);
+
+  // 3. Thumbnail
+  const thumbFilename = `${clipId}.jpg`;
+  const thumbPath = path.join(config.uploadsDir, 'thumbnails', thumbFilename);
+  let thumbnailPath = null;
   try {
-    const startSeconds = parseTime(startTime);
-    const clipDuration = Math.min(duration || 59, config.maxClipDuration);
-
-    // 1. Download only the section we need
-    downloadedPath = await downloadVideo(url, startSeconds, clipDuration);
-
-    // 2. Clip (trim the 2s buffer from the downloaded section)
-    const clipFilename = `${clipId}.mp4`;
-    const clipPath = path.join(config.uploadsDir, 'videos', clipFilename);
-    const trimStart = Math.min(2, startSeconds);
-    await clipVideo(downloadedPath, clipPath, trimStart, clipDuration);
-
-    // 3. Thumbnail
-    const thumbFilename = `${clipId}.jpg`;
-    const thumbPath = path.join(config.uploadsDir, 'thumbnails', thumbFilename);
-    let thumbnailPath = null;
-    try {
-      await generateThumbnail(clipPath, thumbPath);
-      thumbnailPath = thumbPath;
-    } catch (err) {
-      console.warn('Thumbnail generation failed:', err.message);
-    }
-
-    // 4. Metadata
-    let meta = { width: 1920, height: 1080, duration: clipDuration };
-    try {
-      meta = await getMetadata(clipPath);
-    } catch (err) {
-      console.warn('Metadata extraction failed:', err.message);
-    }
-
-    return {
-      filePath: clipPath,
-      thumbnailPath,
-      width: meta.width,
-      height: meta.height,
-      duration: meta.duration,
-    };
-  } finally {
-    // 5. Cleanup temp file
-    if (downloadedPath && fs.existsSync(downloadedPath)) {
-      try { fs.unlinkSync(downloadedPath); } catch {}
-    }
+    await generateThumbnail(clipPath, thumbPath);
+    thumbnailPath = thumbPath;
+  } catch (err) {
+    console.warn('Thumbnail generation failed:', err.message);
   }
+
+  // 4. Metadata
+  let meta = { width: 1920, height: 1080, duration: clipDuration };
+  try {
+    meta = await getMetadata(clipPath);
+  } catch (err) {
+    console.warn('Metadata extraction failed:', err.message);
+  }
+
+  return {
+    filePath: clipPath,
+    thumbnailPath,
+    width: meta.width,
+    height: meta.height,
+    duration: meta.duration,
+  };
 }
 
 module.exports = { createClip, parseTime };
